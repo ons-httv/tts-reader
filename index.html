@@ -44,6 +44,10 @@
   <textarea id="text" placeholder="Paste the copy-ready block here, then tap Speak…"></textarea>
 
   <div class="row">
+    <button id="pull" style="background:var(--ok)">⤓ ▶ Pull newest &amp; play</button>
+  </div>
+
+  <div class="row">
     <button id="speak">▶ Speak</button>
     <button id="pause" class="sec">⏸ Pause</button>
     <button id="stop" class="sec">⏹ Stop</button>
@@ -84,7 +88,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var textEl=$("text"), voiceSel=$("voice"), rate=$("rate"), rateVal=$("rateVal"),
       rateLbl=$("rateLbl"), statusEl=$("status"),
-      speakBtn=$("speak"), pauseBtn=$("pause"), stopBtn=$("stop"),
+      speakBtn=$("speak"), pauseBtn=$("pause"), stopBtn=$("stop"), pullBtn=$("pull"),
       feedEl=$("feed"), autoBtn=$("autoToggle");
 
   if (!synth) { statusEl.textContent = "This browser has no speech synthesis. Use Safari or Chrome."; return; }
@@ -173,6 +177,26 @@
 
   // First speak MUST be inside the tap handler (gesture unlock)
   speakBtn.addEventListener("click", function () { start(textEl.value); });
+
+  // PULL NEWEST & PLAY — one tap fetches the latest feed text and plays it.
+  // The tap itself unlocks audio (silent prime synchronously, before the await),
+  // so playback after the fetch is allowed even on iOS.
+  pullBtn.addEventListener("click", function () {
+    var url = feedEl.value.trim();
+    if (!url) { setStatus("No feed URL yet — open ⚙︎ Auto-receive and paste it once."); return; }
+    try { synth.cancel(); synth.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {} // unlock in-gesture
+    setStatus("Pulling newest…");
+    fetch(url + (url.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now(), { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+      .then(function (t) {
+        t = (t || "").trim();
+        if (!t) { setStatus("Feed is empty."); return; }
+        textEl.value = t;
+        chunks = chunkText(t); idx = 0; speaking = true; paused = false;
+        speakFrom(0);
+      })
+      .catch(function (e) { setStatus("Pull failed: " + e.message); });
+  });
 
   // Pause/Resume — cross-platform safe (Android pause()==stop, so we re-speak from idx)
   pauseBtn.addEventListener("click", function () {
