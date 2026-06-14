@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Crect width='192' height='192' rx='36' fill='%230b0f1a'/%3E%3Ctext x='96' y='128' font-size='110' text-anchor='middle' fill='%237aa2ff'%3E%E2%96%B6%3C/text%3E%3C/svg%3E">
 <link rel="manifest" href='data:application/manifest+json,{"name":"TTS Reader","short_name":"TTS","display":"standalone","background_color":"%230b0f1a","theme_color":"%230b0f1a","start_url":"."}'>
 <style>
-  :root { --bg:#0b0f1a; --panel:#141a2b; --ink:#e8edf7; --mut:#8a96b2; --accent:#7aa2ff; --ok:#5fd08a; --warn:#ffcc66; --cur:#22305c; }
+  :root { --bg:#0b0f1a; --panel:#141a2b; --ink:#e8edf7; --mut:#8a96b2; --accent:#7aa2ff; --ok:#5fd08a; --warn:#ffcc66; --cur:#ffe600; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; background:var(--bg); color:var(--ink);
     font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
@@ -34,8 +34,8 @@
     border:1px solid #232c45; font-size:18px; line-height:1.7; max-height:42vh; overflow:auto; }
   .reader:empty { display:none; }
   .reader .chunk { cursor:pointer; border-radius:5px; padding:0 1px; }
-  .reader .chunk.cur { background:var(--cur); }
-  .reader mark { background:var(--warn); color:#0b0f1a; border-radius:3px; padding:0 1px; }
+  .reader .chunk.cur { background:var(--cur); color:#0b0f1a; }
+  .reader mark { background:#ff8c00; color:#0b0f1a; border-radius:3px; padding:0 1px; }
   .status { margin-top:12px; padding:10px 12px; border-radius:12px; background:var(--panel);
     color:var(--mut); font-size:14px; min-height:20px; }
   .status b { color:var(--ok); }
