@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TTS Audio Player</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0f1a">
+<link rel="manifest" href='data:application/manifest+json,{"name":"TTS Audio","short_name":"TTS Audio","display":"standalone","background_color":"%230b0f1a","theme_color":"%230b0f1a","start_url":"."}'>
+<style>
+  :root { --bg:#0b0f1a; --panel:#141a2b; --ink:#e8edf7; --mut:#8a96b2; --accent:#7aa2ff; --ok:#5fd08a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  body { padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom)); }
+  h1 { font-size:17px; color:var(--mut); font-weight:600; }
+  .sub { color:var(--mut); font-size:13px; margin:-6px 0 14px; }
+  button { width:100%; min-height:64px; border:0; border-radius:14px; font-size:20px; font-weight:700; color:#0b0f1a; background:var(--ok); margin-top:12px; }
+  button.sec { background:var(--panel); color:var(--ink); border:1px solid #2a3554; }
+  audio { width:100%; margin-top:14px; }
+  label { color:var(--mut); font-size:13px; display:block; margin:16px 0 4px; }
+  input[type=text] { width:100%; min-height:48px; padding:10px 12px; border-radius:12px; background:var(--panel); color:var(--ink); border:1px solid #2a3554; font-size:15px; }
+  .status { margin-top:12px; padding:10px 12px; border-radius:12px; background:var(--panel); color:var(--mut); font-size:14px; min-height:20px; }
+  .status b { color:var(--ok); }
+  .hint { color:var(--mut); font-size:12px; margin-top:8px; }
+</style>
+</head>
+<body>
+  <h1>▶ TTS Audio Player</h1>
+  <div class="sub">Separate audio track — plays a generated audio file (works in the background &amp; bubble, unlike the live-speech page).</div>
+
+  <button id="pull">⤓ ▶ Pull newest &amp; play</button>
+  <audio id="player" controls preload="none"></audio>
+  <div class="status" id="status">Set the audio feed URL below, then tap Pull.</div>
+
+  <label for="feed">Audio feed URL (points at the latest generated audio file)</label>
+  <input type="text" id="feed" placeholder="https://…/audio-feed.mp3" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+  <div class="hint">This page only <i>plays</i> audio — generation/hosting is the separate decision (edge-tts vs local; private host vs unguessable). Because it uses an &lt;audio&gt; element, playback continues in the background, on the lock screen, and inside a floating-bubble WebView.</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id){ return document.getElementById(id); };
+  var player=$("player"), pullBtn=$("pull"), feedEl=$("feed"), statusEl=$("status");
+  var LS = window.localStorage;
+  function setStatus(m, ok){ statusEl.innerHTML = ok ? "<b>"+m+"</b>" : m; }
+
+  feedEl.value = LS.getItem("ttsAudioFeed") || "";
+  feedEl.addEventListener("change", function(){ LS.setItem("ttsAudioFeed", feedEl.value.trim()); });
+
+  function mediaSession(){
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title:"Newest reply", artist:"TTS Audio" });
+      navigator.mediaSession.setActionHandler("play", function(){ player.play(); });
+      navigator.mediaSession.setActionHandler("pause", function(){ player.pause(); });
+    } catch(e){}
+  }
+
+  function playUrl(u){
+    // cache-bust so we always get the latest generated file
+    player.src = u + (u.indexOf("?")<0?"?":"&") + "t=" + Date.now();
+    player.play().then(function(){ setStatus("Playing newest.", true); mediaSession(); })
+      .catch(function(e){ setStatus("Tap the audio control to start (browser blocked autoplay): "+e.message); });
+  }
+
+  pullBtn.addEventListener("click", function(){
+    var u = feedEl.value.trim();
+    if (!u){ setStatus("Enter the audio feed URL first."); return; }
+    LS.setItem("ttsAudioFeed", u);
+    setStatus("Pulling newest audio…");
+    // the tap is the gesture; load + play the audio file directly
+    playUrl(u);
+  });
+
+  player.addEventListener("ended", function(){ setStatus("Done."); });
+
+  // one-tap launch: open …/audio.html?play=1 from a home-screen icon / bubble
+  try {
+    var p = new URLSearchParams(location.search);
+    if (p.has("play") && feedEl.value.trim()) {
+      var big = document.createElement("button");
+      big.textContent = "▶ Tap to play newest";
+      big.style.cssText = "position:fixed;left:0;right:0;bottom:0;margin:0;border-radius:0;min-height:88px;z-index:9";
+      big.addEventListener("click", function(){ big.remove(); pullBtn.click(); });
+      document.body.appendChild(big);
+    }
+  } catch(e){}
+})();
+</script>
+</body>
+</html>
