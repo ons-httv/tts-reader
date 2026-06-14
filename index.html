@@ -11,13 +11,13 @@
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Crect width='192' height='192' rx='36' fill='%230b0f1a'/%3E%3Ctext x='96' y='128' font-size='110' text-anchor='middle' fill='%237aa2ff'%3E%E2%96%B6%3C/text%3E%3C/svg%3E">
 <link rel="manifest" href='data:application/manifest+json,{"name":"TTS Reader","short_name":"TTS","display":"standalone","background_color":"%230b0f1a","theme_color":"%230b0f1a","start_url":"."}'>
 <style>
-  :root { --bg:#0b0f1a; --panel:#141a2b; --ink:#e8edf7; --mut:#8a96b2; --accent:#7aa2ff; --ok:#5fd08a; --warn:#ffcc66; }
+  :root { --bg:#0b0f1a; --panel:#141a2b; --ink:#e8edf7; --mut:#8a96b2; --accent:#7aa2ff; --ok:#5fd08a; --warn:#ffcc66; --cur:#22305c; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; background:var(--bg); color:var(--ink);
     font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   body { padding:max(14px,env(safe-area-inset-top)) 14px max(14px,env(safe-area-inset-bottom)); }
   h1 { font-size:17px; margin:2px 0 10px; color:var(--mut); font-weight:600; letter-spacing:.3px; }
-  textarea { width:100%; min-height:34vh; resize:vertical; padding:14px; border-radius:14px;
+  textarea { width:100%; min-height:22vh; resize:vertical; padding:14px; border-radius:14px;
     background:var(--panel); color:var(--ink); border:1px solid #232c45; font-size:17px; }
   .row { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; align-items:center; }
   button { flex:1 1 auto; min-height:56px; min-width:88px; border:0; border-radius:14px;
@@ -30,6 +30,12 @@
     background:var(--panel); color:var(--ink); border:1px solid #2a3554; font-size:16px; }
   input[type=range] { width:100%; }
   .grid2 { display:flex; gap:12px; } .grid2>div { flex:1; }
+  .reader { margin-top:6px; padding:12px 14px; border-radius:14px; background:var(--panel);
+    border:1px solid #232c45; font-size:18px; line-height:1.7; max-height:42vh; overflow:auto; }
+  .reader:empty { display:none; }
+  .reader .chunk { cursor:pointer; border-radius:5px; padding:0 1px; }
+  .reader .chunk.cur { background:var(--cur); }
+  .reader mark { background:var(--warn); color:#0b0f1a; border-radius:3px; padding:0 1px; }
   .status { margin-top:12px; padding:10px 12px; border-radius:12px; background:var(--panel);
     color:var(--mut); font-size:14px; min-height:20px; }
   .status b { color:var(--ok); }
@@ -41,7 +47,7 @@
 </head>
 <body>
   <h1>▶ TTS Reader <span class="pill" id="rateLbl"></span></h1>
-  <textarea id="text" placeholder="Paste the copy-ready block here, then tap Speak…"></textarea>
+  <textarea id="text" placeholder="Paste the copy-ready block here, then tap Speak (or Pull)…"></textarea>
 
   <div class="row">
     <button id="pull" style="background:var(--ok)">⤓ ▶ Pull newest &amp; play</button>
@@ -52,6 +58,9 @@
     <button id="pause" class="sec">⏸ Pause</button>
     <button id="stop" class="sec">⏹ Stop</button>
   </div>
+
+  <label>Reading view — tap any sentence to start reading from there</label>
+  <div class="reader" id="reader"></div>
 
   <div class="grid2">
     <div><label for="voice">Voice</label><select id="voice"></select></div>
@@ -68,16 +77,17 @@
     <div class="row">
       <button id="autoToggle" class="sec">Start auto-receive</button>
     </div>
-    <div class="hint">Polls every 15s; speaks only when the text changes. Needs one tap on “Start” to unlock audio. Leave off to use paste mode.</div>
+    <div class="hint">Polls every 15s; speaks only when the text changes. Needs one tap on “Start” to unlock audio. Leave off to use paste/pull mode. The Pull button also uses this URL.</div>
   </details>
 
   <details>
     <summary>ℹ︎ Tips</summary>
     <div class="hint">
-      • iPhone: download a better voice once — Settings → Accessibility → Spoken Content → Voices → English → get an “Enhanced/Premium” voice.<br>
+      • Tap any sentence in the reading view to jump playback there.<br>
+      • Word-by-word highlight works on Android/desktop; on iPhone you’ll get sentence highlight (Safari limitation).<br>
+      • iPhone: download a better voice once — Settings → Accessibility → Spoken Content → Voices → English → “Enhanced/Premium”.<br>
       • Keep the screen on while listening (web TTS stops on lock).<br>
-      • If silent on iPhone, flip the side mute switch off.<br>
-      • “Add to Home Screen” for a one-tap, full-screen launch.
+      • If silent on iPhone, flip the side mute switch off.
     </div>
   </details>
 
@@ -86,18 +96,19 @@
   "use strict";
   var synth = window.speechSynthesis;
   var $ = function (id) { return document.getElementById(id); };
-  var textEl=$("text"), voiceSel=$("voice"), rate=$("rate"), rateVal=$("rateVal"),
+  var textEl=$("text"), readerEl=$("reader"), voiceSel=$("voice"), rate=$("rate"), rateVal=$("rateVal"),
       rateLbl=$("rateLbl"), statusEl=$("status"),
       speakBtn=$("speak"), pauseBtn=$("pause"), stopBtn=$("stop"), pullBtn=$("pull"),
       feedEl=$("feed"), autoBtn=$("autoToggle");
 
   if (!synth) { statusEl.textContent = "This browser has no speech synthesis. Use Safari or Chrome."; return; }
 
-  var voices = [], chunks = [], idx = 0, speaking = false, paused = false;
+  var voices = [], chunks = [], chunkEls = [], idx = 0, speaking = false, paused = false;
   var keepRefs = [];                       // anti-GC: keep utterance refs so onend fires
   var LS = window.localStorage;
 
   function setStatus(msg, ok) { statusEl.innerHTML = ok ? ("<b>" + msg + "</b>") : msg; }
+  function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
   // ---- defensive voice loading (Safari sync, Chrome/Android async) ----
   function populate() {
@@ -110,126 +121,153 @@
       o.value = i; o.textContent = v.name + " — " + v.lang + (v.default ? " (default)" : "");
       voiceSel.appendChild(o);
     });
-    if (want != null) {
-      for (var i = 0; i < voices.length; i++) if (voices[i].voiceURI === want) { voiceSel.value = i; break; }
-    } else {
-      for (var j = 0; j < voices.length; j++) if (/^en/i.test(voices[j].lang)) { voiceSel.value = j; break; }
-    }
+    if (want != null) { for (var i=0;i<voices.length;i++) if (voices[i].voiceURI===want){voiceSel.value=i;break;} }
+    else { for (var j=0;j<voices.length;j++) if (/^en/i.test(voices[j].lang)){voiceSel.value=j;break;} }
     return true;
   }
   function loadVoices() {
     if (populate()) return;
-    synth.addEventListener && synth.addEventListener("voiceschanged", function once() {
-      populate(); synth.removeEventListener("voiceschanged", once);
-    });
-    var tries = 0, t = setInterval(function () { if (populate() || ++tries > 20) clearInterval(t); }, 250);
+    synth.addEventListener && synth.addEventListener("voiceschanged", function once(){ populate(); synth.removeEventListener("voiceschanged", once); });
+    var tries=0, t=setInterval(function(){ if (populate()||++tries>20) clearInterval(t); },250);
   }
   loadVoices();
-
-  voiceSel.addEventListener("change", function () {
-    var v = voices[voiceSel.value]; if (v) LS.setItem("ttsVoice", v.voiceURI);
-  });
+  voiceSel.addEventListener("change", function(){ var v=voices[voiceSel.value]; if(v) LS.setItem("ttsVoice", v.voiceURI); });
 
   // ---- rate ----
-  function applyRateLabel() { rateVal.textContent = (+rate.value).toFixed(2).replace(/0$/,""); rateLbl.textContent = rate.value + "×"; }
-  rate.value = LS.getItem("ttsRate") || "1";
-  applyRateLabel();
-  rate.addEventListener("input", function () { applyRateLabel(); LS.setItem("ttsRate", rate.value); });
+  function applyRateLabel(){ rateVal.textContent=(+rate.value).toFixed(2).replace(/0$/,""); rateLbl.textContent=rate.value+"×"; }
+  rate.value = LS.getItem("ttsRate") || "1"; applyRateLabel();
+  rate.addEventListener("input", function(){ applyRateLabel(); LS.setItem("ttsRate", rate.value); });
 
-  // ---- chunk on sentence boundaries, ~180 chars ----
-  function chunkText(text, max) {
-    max = max || 180;
-    var sentences = text.replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]+[\])'"`’”]*|\S[^.!?]*$/g) || [text];
-    var out = [], buf = "";
-    for (var k = 0; k < sentences.length; k++) {
-      var s = sentences[k];
-      if ((buf + " " + s).trim().length > max) {
-        if (buf) out.push(buf.trim());
-        if (s.length > max) { for (var i = 0; i < s.length; i += max) out.push(s.slice(i, i + max).trim()); buf = ""; }
-        else buf = s;
-      } else { buf = (buf ? buf + " " : "") + s; }
-    }
-    if (buf.trim()) out.push(buf.trim());
-    return out;
+  // ---- split into SENTENCE-level chunks (fine resume + highlight granularity) ----
+  function chunkText(text){
+    var t = text.replace(/\s+/g," ").trim();
+    var sentences = t.match(/[^.!?]+[.!?]+[\])'"`’”]*|\S[^.!?]*$/g) || [t];
+    var out = [];
+    sentences.forEach(function(s){
+      s = s.trim(); if (!s) return;
+      if (s.length <= 220) out.push(s);
+      else for (var i=0;i<s.length;i+=220) out.push(s.slice(i,i+220).trim());
+    });
+    return out.length ? out : [t];
   }
 
-  function speakFrom(i) {
-    if (i >= chunks.length) { speaking = false; paused = false; setStatus("Done.", true); return; }
-    idx = i;
+  // ---- build the tappable reading view ----
+  function buildReader(text){
+    chunks = chunkText(text);
+    readerEl.innerHTML = "";
+    chunkEls = [];
+    chunks.forEach(function(c, i){
+      var sp = document.createElement("span");
+      sp.className = "chunk"; sp.dataset.i = i; sp.textContent = c + " ";
+      sp.addEventListener("click", function(){ startFrom(i); });
+      readerEl.appendChild(sp); chunkEls.push(sp);
+    });
+  }
+  function paintPlain(){ chunkEls.forEach(function(e,k){ e.textContent = chunks[k] + " "; e.classList.remove("cur"); }); }
+  function highlightChunk(i){
+    paintPlain();
+    if (chunkEls[i]) { chunkEls[i].classList.add("cur"); try { chunkEls[i].scrollIntoView({block:"center"}); } catch(e){} }
+  }
+  // word-level highlight inside the current chunk (Android/desktop; iOS won't fire onboundary)
+  function markWord(i, ci, cl){
+    var el = chunkEls[i]; if (!el || ci == null) return;
+    var c = chunks[i];
+    if (!cl) { var m = c.slice(ci).match(/^\S+/); cl = m ? m[0].length : 0; }
+    if (!cl) return;
+    el.innerHTML = esc(c.slice(0,ci)) + "<mark>" + esc(c.slice(ci,ci+cl)) + "</mark>" + esc(c.slice(ci+cl)) + " ";
+  }
+
+  function speakFrom(i){
+    if (i >= chunks.length){ speaking=false; paused=false; paintPlain(); setStatus("Done.", true); return; }
+    idx = i; highlightChunk(i);
     var u = new SpeechSynthesisUtterance(chunks[i]);
-    var v = voices[voiceSel.value]; if (v) { u.voice = v; u.lang = v.lang; }
+    var v = voices[voiceSel.value]; if (v){ u.voice=v; u.lang=v.lang; }
     u.rate = parseFloat(rate.value) || 1;
-    u.onend = function () { if (speaking && !paused) speakFrom(idx + 1); };
-    u.onerror = function () { if (speaking && !paused) speakFrom(idx + 1); }; // skip a bad chunk
-    keepRefs.push(u); if (keepRefs.length > 50) keepRefs.shift();
-    setStatus("Speaking " + (i + 1) + " / " + chunks.length + " …");
+    u.onboundary = function(ev){ if (ev && (ev.name==="word" || ev.charIndex!=null)) markWord(i, ev.charIndex, ev.charLength); };
+    u.onend = function(){ if (speaking && !paused) speakFrom(idx+1); };
+    u.onerror = function(){ if (speaking && !paused) speakFrom(idx+1); };
+    keepRefs.push(u); if (keepRefs.length>50) keepRefs.shift();
+    setStatus("Reading " + (i+1) + " / " + chunks.length + " …");
     synth.speak(u);
   }
 
-  function start(text) {
-    text = (text || "").trim();
-    if (!text) { setStatus("Nothing to read — paste some text first."); return; }
-    synth.cancel();                                  // clear stale state (esp. iOS)
-    try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {}  // gesture-unlock
-    chunks = chunkText(text); idx = 0; speaking = true; paused = false;
-    speakFrom(0);
+  // Start playback at a specific sentence (also the click-to-start path).
+  function startFrom(i){
+    if (!chunks.length){ if (textEl.value.trim()) buildReader(textEl.value); else { setStatus("Nothing to read."); return; } }
+    synth.cancel();
+    try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch(e){}  // unlock in-gesture
+    speaking = true; paused = false; pauseBtn.textContent = "⏸ Pause";
+    speakFrom(Math.max(0, Math.min(i, chunks.length-1)));
   }
 
-  // First speak MUST be inside the tap handler (gesture unlock)
-  speakBtn.addEventListener("click", function () { start(textEl.value); });
+  function start(text){
+    text = (text||"").trim();
+    if (!text){ setStatus("Nothing to read — paste or pull text first."); return; }
+    buildReader(text);
+    startFrom(0);
+  }
 
-  // PULL NEWEST & PLAY — one tap fetches the latest feed text and plays it.
-  // The tap itself unlocks audio (silent prime synchronously, before the await),
-  // so playback after the fetch is allowed even on iOS.
-  pullBtn.addEventListener("click", function () {
-    var url = feedEl.value.trim();
-    if (!url) { setStatus("No feed URL yet — open ⚙︎ Auto-receive and paste it once."); return; }
-    try { synth.cancel(); synth.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {} // unlock in-gesture
-    setStatus("Pulling newest…");
-    fetch(url + (url.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now(), { cache: "no-store" })
-      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
-      .then(function (t) {
-        t = (t || "").trim();
-        if (!t) { setStatus("Feed is empty."); return; }
-        textEl.value = t;
-        chunks = chunkText(t); idx = 0; speaking = true; paused = false;
-        speakFrom(0);
-      })
-      .catch(function (e) { setStatus("Pull failed: " + e.message); });
+  // rebuild reading view as text changes so tapping works before first play
+  var buildT=null;
+  textEl.addEventListener("input", function(){
+    clearTimeout(buildT);
+    buildT = setTimeout(function(){ var t=textEl.value.trim(); if(t) buildReader(t); else { readerEl.innerHTML=""; chunks=[]; chunkEls=[]; } }, 350);
   });
 
-  // Pause/Resume — cross-platform safe (Android pause()==stop, so we re-speak from idx)
-  pauseBtn.addEventListener("click", function () {
+  speakBtn.addEventListener("click", function(){ start(textEl.value); });
+
+  // PAUSE / RESUME at the exact current sentence (idx is preserved; sentence-level = minimal repeat)
+  pauseBtn.addEventListener("click", function(){
     if (!speaking) return;
-    if (!paused) { paused = true; synth.cancel(); setStatus("Paused at " + (idx + 1) + " / " + chunks.length + ". Tap Resume."); pauseBtn.textContent = "▶ Resume"; }
-    else { paused = false; pauseBtn.textContent = "⏸ Pause"; try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {} speakFrom(idx); }
+    if (!paused){
+      paused = true; synth.cancel();
+      setStatus("Paused at sentence " + (idx+1) + " / " + chunks.length + ". Tap Resume.");
+      pauseBtn.textContent = "▶ Resume";
+    } else {
+      paused = false; pauseBtn.textContent = "⏸ Pause";
+      try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch(e){}
+      speakFrom(idx);
+    }
   });
 
-  stopBtn.addEventListener("click", function () {
-    speaking = false; paused = false; pauseBtn.textContent = "⏸ Pause"; synth.cancel(); setStatus("Stopped.");
+  stopBtn.addEventListener("click", function(){
+    speaking=false; paused=false; pauseBtn.textContent="⏸ Pause"; synth.cancel(); paintPlain(); setStatus("Stopped.");
+  });
+
+  // PULL newest & play (one tap; the tap unlocks audio)
+  pullBtn.addEventListener("click", function(){
+    var url = feedEl.value.trim();
+    if (!url){ setStatus("No feed URL yet — open ⚙︎ Auto-receive and paste it once."); return; }
+    try { synth.cancel(); synth.speak(new SpeechSynthesisUtterance(" ")); } catch(e){}
+    setStatus("Pulling newest…");
+    fetch(url + (url.indexOf("?")<0?"?":"&") + "t=" + Date.now(), { cache:"no-store" })
+      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); })
+      .then(function(t){ t=(t||"").trim(); if(!t){ setStatus("Feed is empty."); return; }
+        textEl.value=t; buildReader(t); speaking=true; paused=false; pauseBtn.textContent="⏸ Pause"; speakFrom(0); })
+      .catch(function(e){ setStatus("Pull failed: "+e.message); });
   });
 
   // ---- optional auto-receive ----
-  var pollTimer = null, lastText = null;
+  var pollTimer=null, lastText=null;
   feedEl.value = LS.getItem("ttsFeed") || "";
-  feedEl.addEventListener("change", function () { LS.setItem("ttsFeed", feedEl.value.trim()); });
-  function stopAuto() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; autoBtn.textContent = "Start auto-receive"; }
-  async function poll() {
-    var url = feedEl.value.trim(); if (!url) return;
+  feedEl.addEventListener("change", function(){ LS.setItem("ttsFeed", feedEl.value.trim()); });
+  function stopAuto(){ if(pollTimer) clearInterval(pollTimer); pollTimer=null; autoBtn.textContent="Start auto-receive"; }
+  async function poll(){
+    var url=feedEl.value.trim(); if(!url) return;
     try {
-      var res = await fetch(url + (url.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now(), { cache: "no-store" });
-      if (!res.ok) { setStatus("Auto: fetch " + res.status); return; }
-      var t = (await res.text()).trim();
-      if (t && t !== lastText) { lastText = t; textEl.value = t; start(t); }
-    } catch (e) { setStatus("Auto: " + e.message); }
+      var res = await fetch(url + (url.indexOf("?")<0?"?":"&") + "t=" + Date.now(), { cache:"no-store" });
+      if(!res.ok){ setStatus("Auto: fetch "+res.status); return; }
+      var t=(await res.text()).trim();
+      if(t && t!==lastText){ lastText=t; textEl.value=t; start(t); }
+    } catch(e){ setStatus("Auto: "+e.message); }
   }
-  autoBtn.addEventListener("click", function () {
-    if (pollTimer) { stopAuto(); setStatus("Auto-receive off."); return; }
-    if (!feedEl.value.trim()) { setStatus("Enter a feed URL first."); return; }
+  autoBtn.addEventListener("click", function(){
+    if(pollTimer){ stopAuto(); setStatus("Auto-receive off."); return; }
+    if(!feedEl.value.trim()){ setStatus("Enter a feed URL first."); return; }
     LS.setItem("ttsFeed", feedEl.value.trim());
-    try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {}  // unlock within this tap
-    lastText = null; autoBtn.textContent = "Stop auto-receive"; setStatus("Auto-receive on — listening for new text…", true);
-    poll(); pollTimer = setInterval(poll, 15000);
+    try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch(e){}
+    lastText=null; autoBtn.textContent="Stop auto-receive"; setStatus("Auto-receive on — listening for new text…", true);
+    poll(); pollTimer=setInterval(poll, 15000);
   });
 })();
 </script>
