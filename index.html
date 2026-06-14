@@ -269,6 +269,29 @@
     lastText=null; autoBtn.textContent="Stop auto-receive"; setStatus("Auto-receive on — listening for new text…", true);
     poll(); pollTimer=setInterval(poll, 15000);
   });
+
+  // ---- one-tap launch: open  …/?play=1  (from a home-screen icon or a floating
+  // bubble app). Pre-fetches the newest block into the reading view and shows a
+  // big bottom bar; one tap plays. (The web requires a gesture to start audio, so
+  // the launch can't auto-play on its own — this makes it a single guaranteed tap.)
+  (function () {
+    try {
+      var p = new URLSearchParams(location.search);
+      if (!p.has("play")) return;
+      var url = feedEl.value.trim();
+      var big = document.createElement("button");
+      big.textContent = "▶ Tap to play newest";
+      big.style.cssText = "position:fixed;left:0;right:0;bottom:0;margin:0;border-radius:0;min-height:88px;font-size:22px;z-index:9;background:var(--ok);color:#0b0f1a";
+      big.addEventListener("click", function () { big.remove(); pullBtn.click(); });
+      document.body.appendChild(big);
+      if (url) {
+        fetch(url + (url.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now(), { cache: "no-store" })
+          .then(function (r) { return r.ok ? r.text() : ""; })
+          .then(function (t) { t = (t || "").trim(); if (t) { textEl.value = t; buildReader(t); setStatus("Newest pulled — tap the green bar to play.", true); } })
+          .catch(function () {});
+      }
+    } catch (e) {}
+  })();
 })();
 </script>
 </body>
