@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TTS Reader</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0f1a">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Crect width='192' height='192' rx='36' fill='%230b0f1a'/%3E%3Ctext x='96' y='128' font-size='110' text-anchor='middle' fill='%237aa2ff'%3E%E2%96%B6%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href='data:application/manifest+json,{"name":"TTS Reader","short_name":"TTS","display":"standalone","background_color":"%230b0f1a","theme_color":"%230b0f1a","start_url":"."}'>
+<style>
+  :root { --bg:#0b0f1a; --panel:#141a2b; --ink:#e8edf7; --mut:#8a96b2; --accent:#7aa2ff; --ok:#5fd08a; --warn:#ffcc66; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  body { padding:max(14px,env(safe-area-inset-top)) 14px max(14px,env(safe-area-inset-bottom)); }
+  h1 { font-size:17px; margin:2px 0 10px; color:var(--mut); font-weight:600; letter-spacing:.3px; }
+  textarea { width:100%; min-height:34vh; resize:vertical; padding:14px; border-radius:14px;
+    background:var(--panel); color:var(--ink); border:1px solid #232c45; font-size:17px; }
+  .row { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; align-items:center; }
+  button { flex:1 1 auto; min-height:56px; min-width:88px; border:0; border-radius:14px;
+    font-size:18px; font-weight:700; color:#0b0f1a; background:var(--accent); }
+  button.sec { background:var(--panel); color:var(--ink); border:1px solid #2a3554; }
+  button:active { transform:translateY(1px); }
+  button:disabled { opacity:.45; }
+  label { color:var(--mut); font-size:13px; display:block; margin:14px 0 4px; }
+  select, input[type=text] { width:100%; min-height:48px; padding:10px 12px; border-radius:12px;
+    background:var(--panel); color:var(--ink); border:1px solid #2a3554; font-size:16px; }
+  input[type=range] { width:100%; }
+  .grid2 { display:flex; gap:12px; } .grid2>div { flex:1; }
+  .status { margin-top:12px; padding:10px 12px; border-radius:12px; background:var(--panel);
+    color:var(--mut); font-size:14px; min-height:20px; }
+  .status b { color:var(--ok); }
+  details { margin-top:14px; background:var(--panel); border:1px solid #232c45; border-radius:12px; padding:8px 12px; }
+  summary { color:var(--mut); cursor:pointer; font-size:14px; }
+  .hint { color:var(--mut); font-size:12px; margin-top:6px; }
+  .pill { font-size:12px; color:var(--accent); }
+</style>
+</head>
+<body>
+  <h1>▶ TTS Reader <span class="pill" id="rateLbl"></span></h1>
+  <textarea id="text" placeholder="Paste the copy-ready block here, then tap Speak…"></textarea>
+
+  <div class="row">
+    <button id="speak">▶ Speak</button>
+    <button id="pause" class="sec">⏸ Pause</button>
+    <button id="stop" class="sec">⏹ Stop</button>
+  </div>
+
+  <div class="grid2">
+    <div><label for="voice">Voice</label><select id="voice"></select></div>
+  </div>
+  <label for="rate">Speed — <span id="rateVal">1.0</span>×</label>
+  <input type="range" id="rate" min="0.5" max="2" step="0.05" value="1">
+
+  <div class="status" id="status">Ready. Paste text and tap Speak.</div>
+
+  <details>
+    <summary>⚙︎ Auto-receive (optional) — read my newest block without pasting</summary>
+    <label for="feed">Feed URL (a raw text file I update each reply)</label>
+    <input type="text" id="feed" placeholder="https://…/feed.txt" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="row">
+      <button id="autoToggle" class="sec">Start auto-receive</button>
+    </div>
+    <div class="hint">Polls every 15s; speaks only when the text changes. Needs one tap on “Start” to unlock audio. Leave off to use paste mode.</div>
+  </details>
+
+  <details>
+    <summary>ℹ︎ Tips</summary>
+    <div class="hint">
+      • iPhone: download a better voice once — Settings → Accessibility → Spoken Content → Voices → English → get an “Enhanced/Premium” voice.<br>
+      • Keep the screen on while listening (web TTS stops on lock).<br>
+      • If silent on iPhone, flip the side mute switch off.<br>
+      • “Add to Home Screen” for a one-tap, full-screen launch.
+    </div>
+  </details>
+
+<script>
+(function () {
+  "use strict";
+  var synth = window.speechSynthesis;
+  var $ = function (id) { return document.getElementById(id); };
+  var textEl=$("text"), voiceSel=$("voice"), rate=$("rate"), rateVal=$("rateVal"),
+      rateLbl=$("rateLbl"), statusEl=$("status"),
+      speakBtn=$("speak"), pauseBtn=$("pause"), stopBtn=$("stop"),
+      feedEl=$("feed"), autoBtn=$("autoToggle");
+
+  if (!synth) { statusEl.textContent = "This browser has no speech synthesis. Use Safari or Chrome."; return; }
+
+  var voices = [], chunks = [], idx = 0, speaking = false, paused = false;
+  var keepRefs = [];                       // anti-GC: keep utterance refs so onend fires
+  var LS = window.localStorage;
+
+  function setStatus(msg, ok) { statusEl.innerHTML = ok ? ("<b>" + msg + "</b>") : msg; }
+
+  // ---- defensive voice loading (Safari sync, Chrome/Android async) ----
+  function populate() {
+    voices = synth.getVoices() || [];
+    if (!voices.length) return false;
+    var want = LS.getItem("ttsVoice");
+    voiceSel.innerHTML = "";
+    voices.forEach(function (v, i) {
+      var o = document.createElement("option");
+      o.value = i; o.textContent = v.name + " — " + v.lang + (v.default ? " (default)" : "");
+      voiceSel.appendChild(o);
+    });
+    if (want != null) {
+      for (var i = 0; i < voices.length; i++) if (voices[i].voiceURI === want) { voiceSel.value = i; break; }
+    } else {
+      for (var j = 0; j < voices.length; j++) if (/^en/i.test(voices[j].lang)) { voiceSel.value = j; break; }
+    }
+    return true;
+  }
+  function loadVoices() {
+    if (populate()) return;
+    synth.addEventListener && synth.addEventListener("voiceschanged", function once() {
+      populate(); synth.removeEventListener("voiceschanged", once);
+    });
+    var tries = 0, t = setInterval(function () { if (populate() || ++tries > 20) clearInterval(t); }, 250);
+  }
+  loadVoices();
+
+  voiceSel.addEventListener("change", function () {
+    var v = voices[voiceSel.value]; if (v) LS.setItem("ttsVoice", v.voiceURI);
+  });
+
+  // ---- rate ----
+  function applyRateLabel() { rateVal.textContent = (+rate.value).toFixed(2).replace(/0$/,""); rateLbl.textContent = rate.value + "×"; }
+  rate.value = LS.getItem("ttsRate") || "1";
+  applyRateLabel();
+  rate.addEventListener("input", function () { applyRateLabel(); LS.setItem("ttsRate", rate.value); });
+
+  // ---- chunk on sentence boundaries, ~180 chars ----
+  function chunkText(text, max) {
+    max = max || 180;
+    var sentences = text.replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]+[\])'"`’”]*|\S[^.!?]*$/g) || [text];
+    var out = [], buf = "";
+    for (var k = 0; k < sentences.length; k++) {
+      var s = sentences[k];
+      if ((buf + " " + s).trim().length > max) {
+        if (buf) out.push(buf.trim());
+        if (s.length > max) { for (var i = 0; i < s.length; i += max) out.push(s.slice(i, i + max).trim()); buf = ""; }
+        else buf = s;
+      } else { buf = (buf ? buf + " " : "") + s; }
+    }
+    if (buf.trim()) out.push(buf.trim());
+    return out;
+  }
+
+  function speakFrom(i) {
+    if (i >= chunks.length) { speaking = false; paused = false; setStatus("Done.", true); return; }
+    idx = i;
+    var u = new SpeechSynthesisUtterance(chunks[i]);
+    var v = voices[voiceSel.value]; if (v) { u.voice = v; u.lang = v.lang; }
+    u.rate = parseFloat(rate.value) || 1;
+    u.onend = function () { if (speaking && !paused) speakFrom(idx + 1); };
+    u.onerror = function () { if (speaking && !paused) speakFrom(idx + 1); }; // skip a bad chunk
+    keepRefs.push(u); if (keepRefs.length > 50) keepRefs.shift();
+    setStatus("Speaking " + (i + 1) + " / " + chunks.length + " …");
+    synth.speak(u);
+  }
+
+  function start(text) {
+    text = (text || "").trim();
+    if (!text) { setStatus("Nothing to read — paste some text first."); return; }
+    synth.cancel();                                  // clear stale state (esp. iOS)
+    try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {}  // gesture-unlock
+    chunks = chunkText(text); idx = 0; speaking = true; paused = false;
+    speakFrom(0);
+  }
+
+  // First speak MUST be inside the tap handler (gesture unlock)
+  speakBtn.addEventListener("click", function () { start(textEl.value); });
+
+  // Pause/Resume — cross-platform safe (Android pause()==stop, so we re-speak from idx)
+  pauseBtn.addEventListener("click", function () {
+    if (!speaking) return;
+    if (!paused) { paused = true; synth.cancel(); setStatus("Paused at " + (idx + 1) + " / " + chunks.length + ". Tap Resume."); pauseBtn.textContent = "▶ Resume"; }
+    else { paused = false; pauseBtn.textContent = "⏸ Pause"; try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {} speakFrom(idx); }
+  });
+
+  stopBtn.addEventListener("click", function () {
+    speaking = false; paused = false; pauseBtn.textContent = "⏸ Pause"; synth.cancel(); setStatus("Stopped.");
+  });
+
+  // ---- optional auto-receive ----
+  var pollTimer = null, lastText = null;
+  feedEl.value = LS.getItem("ttsFeed") || "";
+  feedEl.addEventListener("change", function () { LS.setItem("ttsFeed", feedEl.value.trim()); });
+  function stopAuto() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; autoBtn.textContent = "Start auto-receive"; }
+  async function poll() {
+    var url = feedEl.value.trim(); if (!url) return;
+    try {
+      var res = await fetch(url + (url.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now(), { cache: "no-store" });
+      if (!res.ok) { setStatus("Auto: fetch " + res.status); return; }
+      var t = (await res.text()).trim();
+      if (t && t !== lastText) { lastText = t; textEl.value = t; start(t); }
+    } catch (e) { setStatus("Auto: " + e.message); }
+  }
+  autoBtn.addEventListener("click", function () {
+    if (pollTimer) { stopAuto(); setStatus("Auto-receive off."); return; }
+    if (!feedEl.value.trim()) { setStatus("Enter a feed URL first."); return; }
+    LS.setItem("ttsFeed", feedEl.value.trim());
+    try { synth.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {}  // unlock within this tap
+    lastText = null; autoBtn.textContent = "Stop auto-receive"; setStatus("Auto-receive on — listening for new text…", true);
+    poll(); pollTimer = setInterval(poll, 15000);
+  });
+})();
+</script>
+</body>
+</html>
