@@ -47,10 +47,14 @@
 </head>
 <body>
   <h1>▶ TTS Reader <span class="pill" id="rateLbl"></span></h1>
-  <textarea id="text" placeholder="Paste the copy-ready block here, then tap Speak (or Pull)…"></textarea>
+  <div class="row">
+    <button id="clip" style="background:var(--ok)">📋 Paste &amp; Read</button>
+  </div>
+
+  <textarea id="text" placeholder="Tap “📋 Paste &amp; Read” above — or long-press here to Paste and it reads automatically…"></textarea>
 
   <div class="row">
-    <button id="pull" style="background:var(--ok)">⤓ ▶ Pull newest &amp; play</button>
+    <button id="pull" class="sec">⤓ Pull newest from Claude feed</button>
   </div>
 
   <div class="row">
@@ -72,7 +76,7 @@
     <input type="checkbox" id="ducking" checked style="width:22px;height:22px;flex:0 0 auto;"> 🔇 Mute background music while reading
   </label>
 
-  <div class="status" id="status">Ready. Paste text and tap Speak.</div>
+  <div class="status" id="status">Ready. Copy any text anywhere, then tap 📋 Paste &amp; Read.</div>
 
   <script src="silence.js"></script>
 
@@ -105,7 +109,7 @@
   var textEl=$("text"), readerEl=$("reader"), voiceSel=$("voice"), rate=$("rate"), rateVal=$("rateVal"),
       rateLbl=$("rateLbl"), statusEl=$("status"),
       speakBtn=$("speak"), pauseBtn=$("pause"), stopBtn=$("stop"), pullBtn=$("pull"),
-      feedEl=$("feed"), autoBtn=$("autoToggle");
+      feedEl=$("feed"), autoBtn=$("autoToggle"), clipBtn=$("clip");
 
   if (!synth) { statusEl.textContent = "This browser has no speech synthesis. Use Safari or Chrome."; return; }
 
@@ -264,6 +268,33 @@
       .then(function(t){ t=(t||"").trim(); if(!t){ setStatus("Feed is empty."); return; }
         textEl.value=t; buildReader(t); speaking=true; paused=false; pauseBtn.textContent="⏸ Pause"; speakFrom(0); })
       .catch(function(e){ setStatus("Pull failed: "+e.message); });
+  });
+
+  // ---- one-tap: read straight from the clipboard. Universal — ANY copied text
+  // (web pages, messages, anything, on or off Claude). Mobile browsers only allow
+  // a clipboard read on a user gesture, so it lives on this button tap. If the
+  // browser blocks programmatic reads (some iOS), we fall back to paste-to-read. --
+  if (clipBtn) clipBtn.addEventListener("click", function(){
+    try { synth.cancel(); synth.speak(new SpeechSynthesisUtterance(" ")); } catch(e){}  // unlock audio in-gesture
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then(function(t){
+        t=(t||"").trim();
+        if(!t){ setStatus("Clipboard is empty — copy some text first."); return; }
+        textEl.value=t; start(t);
+      }).catch(function(){
+        setStatus("Couldn’t auto-read clipboard — long-press the box → Paste; it reads automatically.");
+        textEl.focus();
+      });
+    } else {
+      setStatus("This browser blocks clipboard read — long-press the box → Paste; it reads automatically.");
+      textEl.focus();
+    }
+  });
+
+  // ---- paste-to-read: pasting into the box auto-starts reading. This is the
+  // guaranteed path on browsers that block programmatic clipboard reads. ----
+  textEl.addEventListener("paste", function(){
+    setTimeout(function(){ var t=textEl.value.trim(); if(t) start(t); }, 60);
   });
 
   // ---- optional auto-receive ----
