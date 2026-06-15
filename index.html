@@ -68,7 +68,13 @@
   <label for="rate">Speed — <span id="rateVal">1.0</span>×</label>
   <input type="range" id="rate" min="0.5" max="2" step="0.05" value="1">
 
+  <label style="display:flex;align-items:center;gap:10px;margin-top:14px;color:var(--ink);font-size:15px;">
+    <input type="checkbox" id="ducking" checked style="width:22px;height:22px;flex:0 0 auto;"> 🔇 Mute background music while reading
+  </label>
+
   <div class="status" id="status">Ready. Paste text and tap Speak.</div>
+
+  <script src="silence.js"></script>
 
   <details>
     <summary>⚙︎ Auto-receive (optional) — read my newest block without pasting</summary>
@@ -106,6 +112,18 @@
   var voices = [], chunks = [], chunkEls = [], idx = 0, speaking = false, paused = false;
   var keepRefs = [];                       // anti-GC: keep utterance refs so onend fires
   var LS = window.localStorage;
+
+  // ---- audio-focus "ducking": while speaking, play a near-silent (inaudible but
+  // non-zero) loop so Android hands media audio focus to this page and PAUSES
+  // background music apps. Released the moment playback stops/pauses/ends. A web
+  // page can't mute the whole phone or non-media sounds — this handles music. ----
+  var duckEl = $("ducking");
+  if (duckEl) { var dpref = LS.getItem("ttsDuck"); if (dpref != null) duckEl.checked = (dpref === "1");
+    duckEl.addEventListener("change", function(){ LS.setItem("ttsDuck", duckEl.checked ? "1" : "0"); if (!duckEl.checked) releaseFocus(); }); }
+  var focusAudio = (function(){ try { var a = new Audio(window.__TTS_SILENCE || ""); a.loop = true; a.preload = "auto"; a.volume = 1; return a; } catch(e){ return null; } })();
+  function duckOn(){ return duckEl ? duckEl.checked : true; }
+  function grabFocus(){ if (!focusAudio || !duckOn()) return; try { if (focusAudio.paused) { var p = focusAudio.play(); if (p && p.catch) p.catch(function(){}); } } catch(e){} }
+  function releaseFocus(){ if (!focusAudio) return; try { focusAudio.pause(); focusAudio.currentTime = 0; } catch(e){} }
 
   function setStatus(msg, ok) { statusEl.innerHTML = ok ? ("<b>" + msg + "</b>") : msg; }
   function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
@@ -178,7 +196,8 @@
   }
 
   function speakFrom(i){
-    if (i >= chunks.length){ speaking=false; paused=false; paintPlain(); setStatus("Done.", true); return; }
+    if (i >= chunks.length){ speaking=false; paused=false; releaseFocus(); paintPlain(); setStatus("Done.", true); return; }
+    grabFocus();
     idx = i; highlightChunk(i);
     var u = new SpeechSynthesisUtterance(chunks[i]);
     var v = voices[voiceSel.value]; if (v){ u.voice=v; u.lang=v.lang; }
@@ -220,7 +239,7 @@
   pauseBtn.addEventListener("click", function(){
     if (!speaking) return;
     if (!paused){
-      paused = true; synth.cancel();
+      paused = true; synth.cancel(); releaseFocus();
       setStatus("Paused at sentence " + (idx+1) + " / " + chunks.length + ". Tap Resume.");
       pauseBtn.textContent = "▶ Resume";
     } else {
@@ -231,7 +250,7 @@
   });
 
   stopBtn.addEventListener("click", function(){
-    speaking=false; paused=false; pauseBtn.textContent="⏸ Pause"; synth.cancel(); paintPlain(); setStatus("Stopped.");
+    speaking=false; paused=false; pauseBtn.textContent="⏸ Pause"; synth.cancel(); releaseFocus(); paintPlain(); setStatus("Stopped.");
   });
 
   // PULL newest & play (one tap; the tap unlocks audio)
