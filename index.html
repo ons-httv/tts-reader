@@ -46,6 +46,12 @@
 </style>
 </head>
 <body>
+  <!-- Command Center button: reuses ONE dashboard window (fixed name 'command-center'),
+       mirroring how the dashboard's Read button reuses one 'tts-reader' window. Lets Omar
+       bounce report->reader->dashboard with no tab pile-up. -->
+  <div class="row" style="margin-bottom:6px">
+    <button class="sec" onclick="window.open('https://dash.laizr.us/','command-center'); return false;">🛰️ Command Center</button>
+  </div>
   <h1>▶ TTS Reader <span class="pill" id="rateLbl"></span></h1>
   <div class="row">
     <button id="clip" style="background:var(--ok)">📋 Paste &amp; Read</button>
@@ -328,6 +334,78 @@
     lastText=null; autoBtn.textContent="Stop auto-receive"; setStatus("Auto-receive on — listening for new text…", true);
     poll(); pollTimer=setInterval(poll, 15000);
   });
+
+  // ---- DEEP-LINK READ: open  …/#t=<uriencoded text>[&autoplay=1]  with the text
+  // to read passed IN THE URL. The dashboard / report / archive "▶️ Read" buttons
+  // open this page with a fixed window name ('tts-reader') so they all REUSE the
+  // SAME reader window — each click REPLACES the text and re-reads here.
+  //
+  // Flow:
+  //   1) parse location.hash first (preferred — keeps long text out of server logs),
+  //      then location.search as a fallback, for a `t=` param.
+  //   2) decodeURIComponent it, drop it into the textarea, and build the reading view
+  //      via the EXISTING start()/buildReader() path (reuses everything already here).
+  //   3) if `autoplay=1` is present, ATTEMPT to auto-start reading. Browser autoplay
+  //      policy may block speechSynthesis from starting without a user gesture in THIS
+  //      window — so we always ALSO show a big "▶ Tap to read" bar; one tap guarantees
+  //      playback. We don't pretend it always auto-starts.
+  //   4) because the window is reused, this also runs again on every subsequent open
+  //      of the same name when the hash changes — see the 'hashchange' listener below.
+  function readParamsFromUrl(){
+    // Prefer the hash (everything after '#'); fall back to the query string.
+    var out = { text: null, autoplay: false };
+    function scan(qs){
+      if (!qs) return;
+      try {
+        var p = new URLSearchParams(qs);
+        if (p.has("t") && out.text == null){ try { out.text = decodeURIComponent(p.get("t")); } catch(e){ out.text = p.get("t"); } }
+        if (p.get("autoplay") === "1") out.autoplay = true;
+      } catch(e){}
+    }
+    scan((location.hash || "").replace(/^#/, ""));
+    scan((location.search || "").replace(/^\?/, ""));
+    return out;
+  }
+
+  // Big, obvious "tap to read" bar — the honest fallback for autoplay blocking.
+  // Tapping it starts reading the text already loaded in the box (a real user gesture,
+  // which unlocks audio everywhere). Removed once tapped.
+  function showTapToRead(text){
+    var existing = document.getElementById("tapToRead");
+    if (existing) existing.remove();
+    var big = document.createElement("button");
+    big.id = "tapToRead";
+    big.textContent = "▶ Tap to read";
+    big.style.cssText = "position:fixed;left:0;right:0;bottom:0;margin:0;border-radius:0;min-height:92px;font-size:24px;z-index:20;background:var(--ok);color:#0b0f1a;font-weight:800;box-shadow:0 -3px 14px rgba(0,0,0,.35)";
+    big.addEventListener("click", function(){ big.remove(); start(textEl.value || text || ""); });
+    document.body.appendChild(big);
+  }
+
+  // Load text from the URL into the reader; optionally try to auto-start.
+  function loadFromUrl(){
+    var p = readParamsFromUrl();
+    if (p.text == null) return false;
+    var t = (p.text || "").trim();
+    if (!t){ setStatus("Read link had no text."); return false; }
+    // REPLACE current text + reading view (works on first load AND on a reused window).
+    synth.cancel(); speaking = false; paused = false; pauseBtn.textContent = "⏸ Pause";
+    textEl.value = t; buildReader(t);
+    if (p.autoplay){
+      // Attempt autostart. start() issues a silent unlock utterance + speaks; if the
+      // browser blocks it without a gesture, nothing audible happens — so we ALWAYS
+      // also show the tap-to-read bar as the guaranteed path.
+      setStatus("Loaded from Read link — starting… (tap the green bar if it stays silent).", true);
+      try { start(t); } catch(e){}
+      showTapToRead(t);
+    } else {
+      setStatus("Loaded from Read link — tap ▶ Speak to read.", true);
+      showTapToRead(t);
+    }
+    return true;
+  }
+  loadFromUrl();
+  // Reused window: when a new Read click changes the hash on the SAME window, re-load.
+  window.addEventListener("hashchange", function(){ loadFromUrl(); });
 
   // ---- one-tap launch: open  …/?play=1  (from a home-screen icon or a floating
   // bubble app). Pre-fetches the newest block into the reading view and shows a
