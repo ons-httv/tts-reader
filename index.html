@@ -406,6 +406,15 @@
   loadFromUrl();
   // Reused window: when a new Read click changes the hash on the SAME window, re-load.
   window.addEventListener("hashchange", function(){ loadFromUrl(); });
+  // Singleton guard — only the NEWEST reader tab survives. Reader tabs are script-opened
+  // (via a Read button), so window.close() works on them. When a newer reader claims the
+  // slot in localStorage, older reader tabs get the 'storage' event and self-close. This
+  // beats mobile browsers that ignore the fixed window name and spawn a new tab each time.
+  (function(){ var ID=String(Date.now())+'.'+Math.random();
+    try{ localStorage.setItem('tts.singleton', ID);
+      window.addEventListener('storage', function(e){ if(e.key==='tts.singleton' && e.newValue && e.newValue!==ID){ try{window.close();}catch(_){} } });
+    }catch(e){}
+  })();
 
   // ---- one-tap launch: open  …/?play=1  (from a home-screen icon or a floating
   // bubble app). Pre-fetches the newest block into the reading view and shows a
