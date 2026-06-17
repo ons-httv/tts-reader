@@ -61,6 +61,7 @@
     <button id="speak">▶ Speak</button>
     <button id="pause" class="sec">⏸ Pause</button>
     <button id="stop" class="sec">⏹ Stop</button>
+    <button id="clear" class="sec">🗑 Clear</button>
   </div>
 
   <label>Reading view — tap any sentence to start reading from there</label>
@@ -255,6 +256,14 @@
 
   stopBtn.addEventListener("click", function(){
     speaking=false; paused=false; pauseBtn.textContent="⏸ Pause"; synth.cancel(); releaseFocus(); paintPlain(); setStatus("Stopped.");
+  });
+
+  // CLEAR — empty the text box + reading view so a fresh paste is one tap away.
+  var clearBtn=$("clear");
+  if (clearBtn) clearBtn.addEventListener("click", function(){
+    speaking=false; paused=false; pauseBtn.textContent="⏸ Pause"; try{synth.cancel();}catch(e){} releaseFocus();
+    textEl.value=""; readerEl.innerHTML=""; chunks=[]; chunkEls=[]; idx=0;
+    setStatus("Cleared — paste or pull new text."); textEl.focus();
   });
 
   // PULL newest & play (one tap; the tap unlocks audio)
