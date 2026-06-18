@@ -174,8 +174,16 @@
     var out = [];
     sentences.forEach(function(s){
       s = s.trim(); if (!s) return;
-      if (s.length <= 220) out.push(s);
-      else for (var i=0;i<s.length;i+=220) out.push(s.slice(i,i+220).trim());
+      if (s.length <= 220) { out.push(s); return; }
+      // Long sentence: split on WORD boundaries (never mid-word) so the voice can't split a
+      // word across chunks — e.g. "U.S." was getting cut to "you" + "s" by a raw 220-char slice.
+      var words = s.split(" "), line = "";
+      for (var k=0;k<words.length;k++){
+        var w = words[k];
+        if (line && (line.length + 1 + w.length) > 220){ out.push(line); line = w; }
+        else { line = line ? line + " " + w : w; }
+      }
+      if (line) out.push(line);
     });
     return out.length ? out : [t];
   }
